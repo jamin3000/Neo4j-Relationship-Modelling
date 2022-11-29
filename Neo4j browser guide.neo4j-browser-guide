@@ -1,0 +1,265 @@
+<article class="guide" >
+  <carousel class="deck container-fluid">
+    <slide class="row-fluid">
+      	<h3>1. Graph Building</h3>
+      <div class="col-sm-12>
+
+        <p class="lead"> In this slide, you should provide one or more queries to
+build a graph to represent units and student information by loading the data from
+the JSON files. The graph should be built in a database called “comp5338a4”.
+        </p>
+
+        <p>Steps:</p>
+        <ol class="big">
+          <li>1. Load students and completed units with default unit type: 'elective'</li>
+          <li>2. Load students as a merge with enrolled units and default unit type: 'elective'</li>
+          <li>3. Update units, set special property if unit is a COMP/INFO unit</li>
+          <li>4. Update completed relationships, set pass if not a failing score</li>
+	  <li>5. Load core units, with core type overwriting previous types where applicable</li>
+      </ol>
+	<pre class="pre-scrollable code runnable">
+:use comp5338a4;
+
+CALL apoc.load.json("file:///students.json")
+YIELD value
+MERGE (s:Student {name: value.name})
+SET s.degree = value.degree
+
+WITH s, value
+UNWIND value.completed AS completed
+MERGE (u:Unit {code: completed.code, title: completed.title, credit_point: completed.credit_point, type :'elective'})
+MERGE (s)-[c:COMPLETED]->(u)
+ON CREATE
+SET c.year = completed.year, c.score = completed.score, c.institution = completed.institution, c.result = 'fail'
+
+WITH s, value
+UNWIND value.enrolled AS enrolled
+MERGE (u:Unit {code: enrolled.code, title: enrolled.title, credit_point: enrolled.credit_point, type :'elective'})
+MERGE (s)-[e:ENROLLED]->(u)
+ON CREATE
+SET e.year = enrolled.year, e.institution = enrolled.institution;
+
+MATCH (u:Unit)
+WHERE u.code ENDS WITH 'U01' AND (u.code STARTS WITH 'COMP' OR u.code STARTS WITH 'INFO')
+SET u.CI = 'COMP/INFO'
+SET u.type = 'CI credit';
+
+MATCH (u:Unit)
+WHERE u.code STARTS WITH 'COMP' OR u.code STARTS WITH 'INFO'
+SET u.type = 'CI credit';
+
+MATCH p=()-[r:COMPLETED]->() 
+WHERE r.score >= 50 or r.institution = 'external'
+SET r.result = 'pass';
+
+CALL apoc.load.json("file:///core.json")
+YIELD value
+MERGE (u:Unit {code: value.code})
+SET u.credit_point = value.credit_point
+SET u.title = value.title
+SET u.type = 'core';
+
+MATCH (u:Unit)
+WHERE u.code STARTS WITH 'COMP' or u.code STARTS WITH 'INFO'
+SET u.CI = 'COMP/INFO';
+        </pre>
+<figcaption>Graph building</figcaption>
+    </div>
+   </slide>
+    
+
+  <slide class="row-fluid">
+    <div class="col-sm-6">
+      <h3>2. Graph Inspection</h3>
+      <p>In this slide, include one query each to print out the
+following information:
+      </p>
+        <li>1. Number of core units in the graph</li>
+          <li>2. Number of elective units in the graph</li>
+	  </div>
+	  <div class="col-sm-6">
+      <figure>
+        <pre class="pre-scrollable code runnable">
+MATCH (n)
+where n.type = 'core'
+return count(*) as No_of_core_units;
+        </pre>
+        <figcaption>Number of core units: 14</figcaption>
+      </figure>
+      <figure>
+        <pre class="pre-scrollable code runnable">
+MATCH (n)
+where n.type = 'elective'
+return count(*) as No_of_elective_units
+        </pre>
+        <figcaption>Number of elective units: 8</figcaption>
+      </figure>
+    </div>
+  </slide>
+
+  <slide class="row-fluid">
+    <div class="col-sm-3">
+      <h3>3. Average Mark for Each Student</h3>
+      <p>In this slide, write a query to compute the annual average mark for each
+student. Return the result sorted by name and year. The annual average mark is the
+arithmetic average of the scores of all internal units attempted in a particular year.
+      </p>
+    </div>
+
+    <div class="col-sm-9">
+      <figure>
+        <pre class="pre-scrollable code runnable" >
+MATCH (s:Student)-[c:COMPLETED]->(u:Unit)
+WITH s.name as name, c.year as year, collect(c.score) as scores_ls
+UNWIND scores_ls as scores
+RETURN name, year, avg(scores)
+ORDER BY name, year
+        </pre>
+      </figure>
+      <figcaption>Average marks for Alice, Bob and Charlie</figcaption>
+    </div>
+  </slide>
+
+  <slide class="row-fluid">
+    <div class="col-sm-3">
+      <h3>4. Check Total Credit Point Constraint</h3>
+     <p>In this slide, write a query to compute the total
+credit points each student is expected to achieve after they successfully complete the
+units they are currently enrolled in. Return the name and expected total credit points
+for those whose expected total credit points will be greater than or equal to 144.
+      </p>
+    </div>
+    <div class="col-sm-9">
+      <figure>
+        <pre class="pre-scrollable code runnable">
+MATCH (s:Student)
+with s
+optional MATCH (s)-[c:COMPLETED{result:'pass'}]-(u:Unit)
+with s, u, c
+optional MATCH (s)-[e:ENROLLED]-(n:Unit)
+WITH s.name as name, collect(DISTINCT(u)) + collect(DISTINCT(n)) as credits
+UNWIND credits as credit 
+WITH name, SUM(credit.credit_point) as total_cp
+WHERE total_cp >= 144
+RETURN name, total_cp
+
+        </pre>
+      </figure>
+      <figcaption>Credit point check</figcaption>
+    </div>
+  </slide>
+
+  <slide class="row-fluid">
+    <div class="col-sm-3">
+      <h3>5. Core Unit Rule</h3>
+      <p>In this slide, write a query to check for each student in
+the graph, if he/she has obtained or will obtain 72 credit points from core units after
+they successfully complete the units they are currently enrolled in.
+      </p>
+    </div>
+    <div class="col-sm-9">
+      <figure>
+        <pre class="highlight pre-scrollable code runnable">
+MATCH (s:Student)
+with s
+optional MATCH (s)-[c:COMPLETED{result:'pass'}]-(u:Unit{type:'core'})
+with s, u, c
+optional MATCH (s)-[e:ENROLLED]-(n:Unit{type:'core'})
+WITH s.name as name, collect(DISTINCT(u)) + collect(DISTINCT(n)) as credits
+UNWIND credits as credit 
+WITH name, SUM(credit.credit_point) as credits
+RETURN name, CASE WHEN credits < 72 THEN false ELSE true END as satisfy_core
+ORDER BY name desc
+        </pre>
+      </figure>
+      <figcaption>Core unit credit check</figcaption> 
+    </div>
+  </slide>
+
+  <slide class="row-fluid">
+    <div class="col-sm-3">
+      <h3>6. COMP/INFO Unit Rule</h3>
+    <p>In this slide, write a query to check for each student
+in the graph, if he/she has obtained or will obtain 102 credit point from COMP/INFO
+unit after they successfully complete the units they are currently enrolled in.
+    </p>
+    </div>
+      <figure>
+        <pre class="pre-scrollable code runnable">
+MATCH (s:Student)
+with s
+optional MATCH (s)-[c:COMPLETED{result:'pass'}]-(u:Unit{CI:'COMP/INFO'})
+with s, u, c
+optional MATCH (s)-[e:ENROLLED]-(n:Unit{CI:'COMP/INFO'})
+WITH s.name as name, collect(DISTINCT(u)) + collect(DISTINCT(n)) as credits
+UNWIND credits as credit 
+WITH name, SUM(credit.credit_point) as credits
+RETURN name, CASE WHEN credits < 102 THEN false ELSE true END as satisfy_compinfo
+ORDER BY credits
+        </pre>
+      </figure>
+      <figcaption>Boolean true/false check</figcaption>
+    </div>
+  </slide>
+
+  <slide class="row-fluid">
+    <div class="col-sm-3">
+      <h3>7. Elective Unit Check</h3>
+      <p>In this slide, write a query to list the code of all elective
+units a student has completed or is enrolled in.</p>
+
+      <figure>
+        <pre class="pre-scrollable code runnable">
+MATCH (s:Student)
+with s
+optional MATCH (s)-[c:COMPLETED{result:'pass'}]-(u:Unit{type:'elective'})
+with s, u, c
+optional MATCH (s)-[e:ENROLLED]-(n:Unit{type:'elective'})
+WITH s.name as name, collect(DISTINCT(u.code)) + collect(DISTINCT(n.code)) as electives
+RETURN name, electives
+	</pre>
+      </figure>
+      <figcaption>Return list of elective units per student</figcaption>
+    </div>
+  </slide>
+
+  <slide class="row-fluid">
+    <div class="col-sm-3">
+      <h3>8. External Unit Limit Rule</h3>
+      <p>In this slide, write a query to list the code of all elective
+units a student has completed or is enrolled in.</p>
+
+      <figure>
+        <pre class="pre-scrollable code runnable">
+MATCH (s:Student)
+with s
+optional MATCH (s)-[c:COMPLETED{result:'pass',institution:'external'}]-(u:Unit)
+with s, u, c
+optional MATCH (s)-[e:ENROLLED{institution:'external'}]-(n:Unit)
+WITH s.name as name, collect(DISTINCT(u)) + collect(DISTINCT(n)) as credits
+UNWIND credits as credit 
+WITH name, SUM(credit.credit_point) as credits
+RETURN name,  CASE WHEN credits > 72 THEN false ELSE true END as satisfy_ext
+	</pre>
+      </figure>
+      <figcaption>Checks limit of external units < 72</figcaption>
+    </div>
+  </slide>
+
+  <slide class="row-fluid">
+    <div class="col-sm-3">
+      <h3>9. <code>DELETE</code> </h3>
+      <p>In this slide write a query to delete all nodes and their
+relationships in the graph.</p>
+
+      <figure>
+        <pre class="pre-scrollable code runnable">
+MATCH (n)
+DETACH DELETE n
+	</pre>
+      </figure>
+      <figcaption>They're all gone...</figcaption>
+    </div>
+  </slide>
+</carousel>
+</article>
